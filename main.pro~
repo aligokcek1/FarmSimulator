@@ -1,0 +1,284 @@
+% name surname
+% id
+% compiling: yes
+% complete: yes
+
+
+:- ['cmpefarm.pro'].
+:- init_from_map.
+
+
+% 1- agents_distance(+Agent1, +Agent2, -Distance)
+manhattan_distance([X1, Y1], [X2, Y2], Distance) :-  % manhattan_distance predicate which i used a lot
+    Distance is abs(X1 - X2) + abs(Y1 - Y2).
+
+agents_distance(Agent1, Agent2, Distance) :-
+    X1 = Agent1.x, X2 = Agent2.x, Y1 = Agent1.y, Y2 = Agent2.y,
+    manhattan_distance([X1, Y1], [X2, Y2], Distance).
+
+
+% 2- number_of_agents(+State, -NumberOfAgents)
+first_element([First | _], First).                   % Helper predicate to get the agent_dict from State
+
+get_dict_keys(Dict, Keys) :-
+    dict_keys(Dict, Keys).
+
+count_elements([], 0).                               % Base case for count_elements
+count_elements([_ | T], Count) :-
+    count_elements(T, RestCount),
+    Count is RestCount + 1.
+
+number_of_agents(State, NumOfAgents) :-
+    first_element(State, FirstElement),
+    get_dict_keys(FirstElement, Keys),
+    count_elements(Keys, NumOfAgents).
+
+
+% 3- value_of_farm(+State, -Value)
+second_element([_, Second | _], Second).             % Helper predicate to get the object_dict from State
+
+
+calculate_total_value(AgentsDict, TotalValue) :-     % Calculator predicate which can take both agent_dict and object_dict
+    dict_pairs(AgentsDict, _, Pairs),
+    calculate_value(Pairs, 0, TotalValue).
+
+calculate_value([], TotalValue, TotalValue).	     % Base case
+
+calculate_value([_-AgentDict | Rest], Acc, TotalValue) :-
+    AgentType = AgentDict.get(subtype),
+    (AgentType = cow ->
+        NewAcc is Acc + 500
+    ;AgentType = chicken ->
+        NewAcc is Acc + 100
+    ;AgentType = corn ->
+        NewAcc is Acc + 10
+    ;AgentType = grain ->
+        NewAcc is Acc + 30
+    ;AgentType = grass ->
+        NewAcc is Acc + 20
+    ;
+      NewAcc is Acc
+    ),
+
+
+    calculate_value(Rest, NewAcc, TotalValue).
+
+value_of_farm(State, Value):-
+    first_element(State, AgentsDict),
+    second_element(State, ObjectsDict),
+    calculate_total_value(AgentsDict, AgentsTotal),     % firstly, calculate the total value of agents
+    calculate_total_value(ObjectsDict, ObjectsTotal),	% secondly, calculate the total value of objects
+    Value is AgentsTotal + ObjectsTotal.		% sum them up to get total value of farm
+
+
+
+% 4- find_food_coordinates(+State, +AgentId, -Coordinates)
+agent_consumable_types(cow, [grass, grain]).
+agent_consumable_types(chicken, [grain, corn]).
+agent_consumable_types(wolf, [cow, chicken]).
+
+find_food_coordinates(State, AgentId, Coordinates):-
+    first_element(State, AgentsDict),
+    second_element(State, ObjectDict),
+    get_agent(State, AgentId, Agent),
+    AgentType = Agent.get(subtype),
+    (AgentType = wolf ->                                         % If subtype is wolf take agent_dict as foods
+        find_coordinates(AgentType, AgentsDict, TmpCoordinates)
+    ;find_coordinates(AgentType, ObjectDict, TmpCoordinates)     % Otherwise take object_dict.
+    ),
+    ( TmpCoordinates = [] ->					 % If there is no food which means the list is empty, returun false.
+        fail
+    ;
+        Coordinates = TmpCoordinates).
+
+
+find_coordinates(AgentType, ObjectDict, Coordinates) :-
+
+    agent_consumable_types(AgentType, ConsumableTypes),
+    dict_pairs(ObjectDict, _, KeyValuePairs),
+    collect_coordinates(KeyValuePairs, ConsumableTypes, [], Coordinates).
+
+
+collect_coordinates([], _, CollectedCoordinates, CollectedCoordinates).                              % Base case
+collect_coordinates([(_-Agent) | Rest], ConsumableTypes, TempCoordinates, CollectedCoordinates) :-
+     Type = Agent.get(subtype),                  % Get the type of food
+
+    ( member(Type, ConsumableTypes) ->		 % If it is consumable, put on the list
+	X = Agent.get(x), Y = Agent.get(y),
+        NewCoordinates = [[X, Y] | TempCoordinates]
+    ;
+        NewCoordinates = TempCoordinates
+    ),
+
+    collect_coordinates(Rest, ConsumableTypes, NewCoordinates, CollectedCoordinates).
+
+
+
+
+
+% 5- find_nearest_agent(+State, +AgentId, -Coordinates, -NearestAgent)
+
+get_agent_position(Agent, Position) :-
+    get_dict(x, Agent, X),
+    get_dict(y, Agent, Y),
+    Position = [X, Y].
+
+find_nearest_agent(State, AgentId, Coordinates, NearestAgent):-
+    get_agent(State, AgentId, Agent),
+    get_agent_position(Agent, Position),
+    first_element(State, AgentsDict),
+    calculate_distances(AgentsDict, Position, DistanceList),     % First, this predicate calculates each agent's distance and put it in a tuple with
+    insertion_sort(DistanceList, SortedList),                    % its AgentId, DistanceList becomes [(Distance, AgentId), (Distance2, AgentId2)...]
+    second_element_key(SortedList, SecondKey),			 % Then sorts the DistanceList by their distances.
+    get_agent(State, SecondKey, NearestAgent),                   % Then it takes the second Agent's Id because first one is our Agent.(Distance = 0)
+    get_agent_position(NearestAgent, Coordinates), !.
+
+
+
+compute_distances([], _, []).                 % Base case
+
+compute_distances([Key-Agent | Rest], Position, [(Distance, Key) | Distances]) :- % Helper predicate which calculates distance and put it to the list.
+    get_agent_position(Agent, AgentPosition),
+    manhattan_distance(Position, AgentPosition, Distance),
+    compute_distances(Rest, Position, Distances).
+
+
+calculate_distances(AgentsDict, Position, DistanceList) :-			   % Wrapper predicate for compute_distances
+    dict_pairs(AgentsDict, _, AgentsList),
+    compute_distances(AgentsList, Position, DistanceList).
+
+
+insert_sorted((Distance, Key), [], [(Distance, Key)]).                                     % Insertion sort without -> operator
+insert_sorted((Distance, Key), [(D2, K2) | Rest], [(Distance, Key), (D2, K2) | Rest]) :-
+    Distance =< D2.
+insert_sorted(Element, [First | Rest], [First | SortedRest]) :-
+    insert_sorted(Element, Rest, SortedRest).
+
+
+insertion_sort([], []).
+insertion_sort([First | Rest], SortedList) :-
+    insertion_sort(Rest, PartiallySorted),
+    insert_sorted(First, PartiallySorted, SortedList).
+
+
+second_element_key([_, (_, Key) | _], Key).                            % Key of the nearest agent
+
+
+
+
+
+
+% 6- find_nearest_food(+State, +AgentId, -Coordinates, -FoodType, -Distance)
+
+first_element_dist_key([(Distance, Key)|_], Distance, Key).                     % Get the infos of nearest food
+
+find_nearest_food(State, AgentId, Coordinates, FoodType, NearestDistance) :-
+    first_element(State, AgentsDict),
+    second_element(State, ObjectDict),
+    get_agent(State, AgentId, Agent),
+    AgentType = Agent.get(subtype),
+    AgentX = Agent.get(x),
+    AgentY = Agent.get(y),
+
+
+    (AgentType = wolf ->
+        find_distances(AgentType, AgentsDict, AgentX, AgentY, TmpDistances)     % If subtype is wolf, foods are agents
+    ;find_distances(AgentType, ObjectDict, AgentX, AgentY, TmpDistances)        % Else objects
+    ),
+
+
+    ( TmpDistances = [] ->							% If there is no food, return false
+        fail
+    ;
+        Distances = TmpDistances
+    ),
+
+    insertion_sort(Distances, SortedDistances),					% Process is similar to 5th predicate, the only difference is that
+    first_element_dist_key(SortedDistances, Distance, NearestKey),              % we won't put the agent itself on the Distances list. Because we
+                                                                                % only look for consumable foods on collect_distances predicate, so
+    (AgentType = wolf ->                                                        % nearest food is the first element on the (distance, key) list
+	get_agent(State, NearestKey, NearestFood)
+     ;get_object(State, NearestKey, NearestFood)
+    ),
+    X = NearestFood.get(x),
+    Y = NearestFood.get(y),
+    Coordinates = [X,Y],
+    FoodType = NearestFood.get(subtype),
+    NearestDistance = Distance,
+    !.
+
+
+
+
+find_distances(AgentType, ObjectDict, AgentX, AgentY, Distances) :-	        % Wrapper predicate
+    agent_consumable_types(AgentType, ConsumableTypes),
+    dict_pairs(ObjectDict, _, KeyValuePairs),
+    collect_distances(KeyValuePairs, ConsumableTypes, AgentX, AgentY, [], Distances).
+
+
+collect_distances([], _, _, _, CollectedDistances, CollectedDistances).         % Base case
+collect_distances([ObjectId-Agent | Rest], ConsumableTypes, AgentX, AgentY, TempDistances, CollectedDistances) :-
+    Type = Agent.get(subtype),                      % Get the subtypes of foods
+
+    ( member(Type, ConsumableTypes) ->              % If consumable, put the distance to the list
+        ObjectX = Agent.get(x),
+        ObjectY = Agent.get(y),
+        manhattan_distance([AgentX, AgentY], [ObjectX, ObjectY], Distance),
+        NewDistances = [(Distance, ObjectId) | TempDistances]
+    ;
+        NewDistances = TempDistances		    % Else, no change
+    ),
+
+    collect_distances(Rest, ConsumableTypes, AgentX, AgentY, NewDistances, CollectedDistances).
+
+
+
+% A quick info for the 7th predicate. It moves the agent to the desired location successfully but the algorithm doesn't stop when it reach
+% the destination if depthlimit has not reached. If it can, it makes loops and stops when depthlimit has reached.
+
+
+% 7- move_to_coordinate(+State, +AgentId, +X, +Y, -ActionList, +DepthLimit)
+
+agent_allowed_moves(cow, [move_up, move_down, move_left, move_right]).                               % Defining the movement list
+agent_allowed_moves(chicken, [move_up_right, move_up_left, move_down_right, move_down_left]).
+agent_allowed_moves(wolf, [move_up, move_down, move_left, move_right, move_up_right, move_up_left, move_down_right, move_down_left]).
+
+
+move_to_coordinate(State, AgentId, TargetX, TargetY, ActionList, DepthLimit) :-
+    get_agent(State, AgentId, Agent),
+    AgentSubType = Agent.get(subtype),
+    AgentX = Agent.get(x),
+    AgentY = Agent.get(y),
+    agent_allowed_moves(AgentSubType, AllowedMoves),
+
+    find_path(State, AllowedMoves, AgentId, AgentX, AgentY, TargetX, TargetY, 0, DepthLimit, ActionList), !.
+
+
+find_path(_, _, _, StartX, StartY, TargetX, TargetY, _, _, ActionList) :-		   % Base case, if targetpos is equal to desiredpos
+    StartX = TargetX, StartY = TargetY,
+    ActionList = [], !.
+
+find_path(State, AllowedMoves, AgentId, _, _, TargetX, TargetY, Depth, DepthLimit, ActionList) :-   % BFS search for pathfinding
+    Depth < DepthLimit,
+    member(Action, AllowedMoves),
+    move(State, AgentId, Action, NewState),                              % Choose action and move, then get the newState
+    get_agent(NewState, AgentId, NewAgent),
+    NewX = NewAgent.get(x),
+    NewY = NewAgent.get(y),
+    NewDepth is Depth + 1,						 % Increase depth counter
+    ActionList = [Action | T],
+
+    find_path(NewState, AllowedMoves, AgentId, NewX, NewY, TargetX, TargetY, NewDepth, DepthLimit, T).
+
+
+
+% 8- move_to_nearest_food(+State, +AgentId, -ActionList, +DepthLimit)    % Not anything new. Just take the output of 6th predicate and
+move_to_nearest_food(State, AgentId, ActionList, DepthLimit):-           % put it to the 7th predicate as an input.
+    find_nearest_food(State, AgentId, NearestCoordinate, _, _),
+    first_element(NearestCoordinate, TargetX),
+    second_element(NearestCoordinate, TargetY),
+    move_to_coordinate(State, AgentId, TargetX, TargetY, ActionList, DepthLimit).
+
+
+
+% 9- consume_all(+State, +AgentId, -NumberOfMoves, -Value, NumberOfChildren +DepthLimit)
